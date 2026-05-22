@@ -1,711 +1,538 @@
-# Laboratorio 6: Integración con Servicios Azure
+# Laboratorio 6: Integración y Procesamiento de Datos
 
-⏱️ **Duración estimada**: 45-50 minutos  
-🎯 **Nivel**: Avanzado
+⏱️ **Duración estimada**: 40-45 minutos  
+🎯 **Nivel**: Intermedio
 
 ## 📋 Objetivos
 
-- Conectar con Azure Storage (ADLS Gen2)
-- Integrar con Azure Cosmos DB
-- Conectar con Azure SQL Database
-- Trabajar con Azure Key Vault
-- (Bonus) Streaming con Event Hubs
-- Implementar autenticación segura
+- Trabajar con múltiples formatos de datos (CSV, JSON, Parquet)
+- Integrar datos de diferentes fuentes
+- Implementar joins complejos
+- Usar Auto Loader para streaming
+- Crear una capa Serving optimizada
+- Best practices de almacenamiento
 
 ---
 
-## ⚠️ Pre-requisitos
+## 📦 Pre-requisitos
 
-Para este lab necesitas:
-- Azure Storage Account (ADLS Gen2 habilitado)
-- Azure Cosmos DB account (NoSQL API)
-- Azure SQL Database
-- Azure Key Vault
-- Service Principal con permisos adecuados
-
-**Nota**: Si no tienes estos recursos, puedes seguir el lab conceptualmente y ver el código.
+- Cluster de Databricks activo
+- Acceso a DBFS (/tmp/)
+- Notebook: `notebooks/lab-06-integracion.ipynb`
 
 ---
 
-## Ejercicio 1: Azure Storage (ADLS Gen2) (15 min)
+## Ejercicio 1: Preparar Datos de Diferentes Fuentes (10 min)
 
-### Paso 1: Configurar Credenciales en Key Vault
+### Paso 1: Generar Datos en CSV (Catálogo de Productos)
 
-1. **En Azure Portal → Key Vault**
-2. **Secrets → Generate/Import**:
-   ```
-   Name: storage-account-key
-   Value: [tu storage account key]
-   ```
-
-3. **Service Principal** (opción preferida):
-   ```
-   Name: sp-client-id
-   Value: [application/client ID]
-   
-   Name: sp-client-secret
-   Value: [client secret]
-   
-   Name: sp-tenant-id
-   Value: [tenant ID]
-   ```
-
-### Paso 2: Configurar Secret Scope en Databricks
-
-Método: **Azure Key Vault-backed**
-
-1. **En Databricks**, navega a:
-   ```
-   https://<databricks-instance>#secrets/createScope
-   ```
-
-2. **Configurar**:
-   ```
-   Scope name: azure-key-vault
-   DNS Name: https://<keyvault-name>.vault.azure.net/
-   Resource ID: /subscriptions/{sub}/resourceGroups/{rg}/providers/Microsoft.KeyVault/vaults/{kv-name}
-   ```
-
-3. **Create**
-
-### Paso 3: Conectar con Storage - Método 1 (Access Key)
-
-Notebook: "Lab06_Storage_AccessKey"
+Notebook: **Lab06_MultiFormat**
 
 ```python
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # Conexión a ADLS Gen2 - Access Key
-
-# COMMAND ----------
-
-# Configurar credenciales desde Key Vault
-storage_account = "mystorageaccount"  # Cambiar por tu storage account
-container = "data"
-
-storage_key = dbutils.secrets.get(scope="azure-key-vault", key="storage-account-key")
-
-spark.conf.set(
-    f"fs.azure.account.key.{storage_account}.dfs.core.windows.net",
-    storage_key
-)
-
-print("✅ Credenciales configuradas")
-
-# COMMAND ----------
-
-# Listar contenido
-storage_path = f"abfss://{container}@{storage_account}.dfs.core.windows.net/"
-
-try:
-    files = dbutils.fs.ls(storage_path)
-    print(f"📁 Archivos en {container}:")
-    for f in files:
-        print(f"  - {f.name}")
-except Exception as e:
-    print(f"⚠️  Error: {e}")
-    print(f"Tip: Verifica que el container '{container}' existe")
-
-# COMMAND ----------
-
-# Escribir datos de prueba
-from pyspark.sql.functions import *
-
-df_test = spark.range(0, 1000) \
-    .withColumn("timestamp", current_timestamp()) \
-    .withColumn("value", rand() * 100)
-
-output_path = f"{storage_path}lab06_test/data.parquet"
-
-df_test.write.format("parquet").mode("overwrite").save(output_path)
-
-print(f"✅ Datos escritos a: {output_path}")
-
-# COMMAND ----------
-
-# Leer datos
-df_read = spark.read.parquet(output_path)
-print(f"📊 Registros leídos: {df_read.count()}")
-display(df_read.limit(10))
-```
-
-### Paso 4: Conectar - Método 2 (Service Principal + OAuth)
-
-Notebook: "Lab06_Storage_OAuth"
-
-```python
-# Databricks notebook source
-# MAGIC %md
-# MAGIC # Conexión a ADLS Gen2 - Service Principal (OAuth)
-
-# COMMAND ----------
-
-# Configuración con Service Principal (más seguro)
-storage_account = "mystorageaccount"
-container = "data"
-
-# Obtener credenciales desde Key Vault
-client_id = dbutils.secrets.get(scope="azure-key-vault", key="sp-client-id")
-client_secret = dbutils.secrets.get(scope="azure-key-vault", key="sp-client-secret")
-tenant_id = dbutils.secrets.get(scope="azure-key-vault", key="sp-tenant-id")
-
-# Configurar OAuth
-spark.conf.set(f"fs.azure.account.auth.type.{storage_account}.dfs.core.windows.net", "OAuth")
-spark.conf.set(f"fs.azure.account.oauth.provider.type.{storage_account}.dfs.core.windows.net", 
-               "org.apache.hadoop.fs.azurebfs.oauth2.ClientCredsTokenProvider")
-spark.conf.set(f"fs.azure.account.oauth2.client.id.{storage_account}.dfs.core.windows.net", client_id)
-spark.conf.set(f"fs.azure.account.oauth2.client.secret.{storage_account}.dfs.core.windows.net", client_secret)
-spark.conf.set(f"fs.azure.account.oauth2.client.endpoint.{storage_account}.dfs.core.windows.net", 
-               f"https://login.microsoftonline.com/{tenant_id}/oauth2/token")
-
-print("✅ OAuth configurado")
-
-# COMMAND ----------
-
-# Probar conexión
-storage_path = f"abfss://{container}@{storage_account}.dfs.core.windows.net/"
-
-files = dbutils.fs.ls(storage_path)
-print(f"📁 Contenido de {container}:")
-for f in files:
-    print(f"  {f.name}")
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ## Mount Storage (alternativa para acceso persistente)
-
-# COMMAND ----------
-
-# Mount point
-mount_point = "/mnt/datalake"
-
-# Verificar si ya está montado
-mounts = [m.mountPoint for m in dbutils.fs.mounts()]
-
-if mount_point in mounts:
-    print(f"⚠️  {mount_point} ya existe. Unmounting...")
-    dbutils.fs.unmount(mount_point)
-
-# COMMAND ----------
-
-# Montar con OAuth
-configs = {
-    "fs.azure.account.auth.type": "OAuth",
-    "fs.azure.account.oauth.provider.type": "org.apache.hadoop.fs.azurebfs.oauth2.ClientCredsTokenProvider",
-    "fs.azure.account.oauth2.client.id": client_id,
-    "fs.azure.account.oauth2.client.secret": client_secret,
-    "fs.azure.account.oauth2.client.endpoint": f"https://login.microsoftonline.com/{tenant_id}/oauth2/token"
-}
-
-dbutils.fs.mount(
-    source=f"abfss://{container}@{storage_account}.dfs.core.windows.net/",
-    mount_point=mount_point,
-    extra_configs=configs
-)
-
-print(f"✅ Montado en {mount_point}")
-
-# COMMAND ----------
-
-# Usar mount point
-dbutils.fs.ls(mount_point)
-
-# Ahora puedes usar rutas simples
-df = spark.read.parquet(f"{mount_point}/lab06_test/data.parquet")
-print(f"📊 Leído desde mount: {df.count()} registros")
-```
-
----
-
-## Ejercicio 2: Azure Cosmos DB (15 min)
-
-### Paso 1: Configurar Conexión a Cosmos DB
-
-Notebook: "Lab06_CosmosDB"
-
-```python
-# Databricks notebook source
-# MAGIC %md
-# MAGIC # Integración con Azure Cosmos DB
-
-# COMMAND ----------
-
-# Parámetros de Cosmos DB
-cosmos_endpoint = "https://<your-cosmos-account>.documents.azure.com:443/"
-cosmos_database = "SalesDB"
-cosmos_container = "transactions"
-
-# Obtener master key desde Key Vault
-cosmos_key = dbutils.secrets.get(scope="azure-key-vault", key="cosmos-master-key")
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ## 1. Escribir a Cosmos DB
-
-# COMMAND ----------
-
-from pyspark.sql.functions import *
-
-# Crear datos de prueba
-df_sales = spark.range(0, 100) \
-    .withColumn("transaction_id", concat(lit("TXN"), col("id"))) \
-    .withColumn("customer_id", concat(lit("CUST"), (rand() * 1000).cast("int"))) \
-    .withColumn("product", 
-                when(col("id") % 4 == 0, "Laptop")
-                .when(col("id") % 4 == 1, "Mouse")
-                .when(col("id") % 4 == 2, "Keyboard")
-                .otherwise("Monitor")) \
-    .withColumn("amount", (rand() * 1000).cast("decimal(10,2)")) \
-    .withColumn("timestamp", current_timestamp()) \
-    .drop("id")
-
-print("📊 Datos a escribir:")
-display(df_sales.limit(10))
-
-# COMMAND ----------
-
-# Escribir a Cosmos DB
-df_sales.write \
-    .format("cosmos.oltp") \
-    .option("spark.synapse.linkedService", cosmos_endpoint) \
-    .option("spark.cosmos.accountEndpoint", cosmos_endpoint) \
-    .option("spark.cosmos.accountKey", cosmos_key) \
-    .option("spark.cosmos.database", cosmos_database) \
-    .option("spark.cosmos.container", cosmos_container) \
-    .option("spark.cosmos.write.strategy", "ItemOverwrite") \
-    .option("spark.cosmos.write.bulk.enabled", "true") \
-    .mode("append") \
-    .save()
-
-print("✅ Datos escritos a Cosmos DB")
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ## 2. Leer desde Cosmos DB
-
-# COMMAND ----------
-
-df_cosmos = spark.read \
-    .format("cosmos.oltp") \
-    .option("spark.cosmos.accountEndpoint", cosmos_endpoint) \
-    .option("spark.cosmos.accountKey", cosmos_key) \
-    .option("spark.cosmos.database", cosmos_database) \
-    .option("spark.cosmos.container", cosmos_container) \
-    .option("spark.cosmos.read.inferSchema.enabled", "true") \
-    .load()
-
-print(f"📊 Registros en Cosmos DB: {df_cosmos.count()}")
-display(df_cosmos.limit(10))
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ## 3. Query con filtros (pushdown)
-
-# COMMAND ----------
-
-# Filtrar en Cosmos DB (server-side)
-df_filtered = spark.read \
-    .format("cosmos.oltp") \
-    .option("spark.cosmos.accountEndpoint", cosmos_endpoint) \
-    .option("spark.cosmos.accountKey", cosmos_key) \
-    .option("spark.cosmos.database", cosmos_database) \
-    .option("spark.cosmos.container", cosmos_container) \
-    .option("spark.cosmos.read.inferSchema.enabled", "true") \
-    .option("spark.cosmos.read.customQuery", "SELECT * FROM c WHERE c.amount > 500") \
-    .load()
-
-print(f"📊 Transacciones > $500: {df_filtered.count()}")
-display(df_filtered)
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ## 4. Aggregación y Escritura de Resumen
-
-# COMMAND ----------
-
-# Calcular métricas
-df_summary = df_cosmos \
-    .groupBy("product") \
-    .agg(
-        count("*").alias("transactions"),
-        sum("amount").alias("total_sales"),
-        avg("amount").alias("avg_sale")
-    ) \
-    .withColumn("total_sales", round(col("total_sales"), 2)) \
-    .withColumn("avg_sale", round(col("avg_sale"), 2))
-
-print("📊 Resumen por Producto:")
-display(df_summary)
-
-# COMMAND ----------
-
-# Guardar resumen en otro container
-summary_container = "product_summary"
-
-df_summary.write \
-    .format("cosmos.oltp") \
-    .option("spark.cosmos.accountEndpoint", cosmos_endpoint) \
-    .option("spark.cosmos.accountKey", cosmos_key) \
-    .option("spark.cosmos.database", cosmos_database) \
-    .option("spark.cosmos.container", summary_container) \
-    .option("spark.cosmos.write.strategy", "ItemOverwrite") \
-    .mode("overwrite") \
-    .save()
-
-print(f"✅ Resumen guardado en container: {summary_container}")
-```
-
----
-
-## Ejercicio 3: Azure SQL Database (10 min)
-
-Notebook: "Lab06_AzureSQL"
-
-```python
-# Databricks notebook source
-# MAGIC %md
-# MAGIC # Integración con Azure SQL Database
-
-# COMMAND ----------
-
-# Parámetros SQL
-sql_server = "<server-name>.database.windows.net"
-sql_database = "SalesDB"
-sql_table = "dbo.Sales"
-sql_user = "sqladmin"
-
-# Password desde Key Vault
-sql_password = dbutils.secrets.get(scope="azure-key-vault", key="sql-password")
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ## 1. Leer desde Azure SQL
-
-# COMMAND ----------
-
-# JDBC URL
-jdbc_url = f"jdbc:sqlserver://{sql_server}:1433;database={sql_database}"
-
-# Leer tabla
-df_sql = spark.read \
-    .format("jdbc") \
-    .option("url", jdbc_url) \
-    .option("dbtable", sql_table) \
-    .option("user", sql_user) \
-    .option("password", sql_password) \
-    .option("driver", "com.microsoft.sqlserver.jdbc.SQLServerDriver") \
-    .load()
-
-print(f"📊 Registros en SQL: {df_sql.count()}")
-display(df_sql.limit(10))
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ## 2. Leer con Query Personalizado
-
-# COMMAND ----------
-
-# Query con filtros y joins
-custom_query = """
-(SELECT 
-    s.SaleID,
-    s.ProductID,
-    p.ProductName,
-    s.Amount,
-    s.SaleDate
-FROM dbo.Sales s
-JOIN dbo.Products p ON s.ProductID = p.ProductID
-WHERE s.SaleDate >= '2026-01-01'
-) as query
-"""
-
-df_custom = spark.read \
-    .format("jdbc") \
-    .option("url", jdbc_url) \
-    .option("dbtable", custom_query) \
-    .option("user", sql_user) \
-    .option("password", sql_password) \
-    .load()
-
-print(f"📊 Registros con JOIN: {df_custom.count()}")
-display(df_custom)
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ## 3. Lectura Particionada (Performance)
-
-# COMMAND ----------
-
-# Leer en paralelo usando partitioning por columna numérica
-df_partitioned = spark.read \
-    .format("jdbc") \
-    .option("url", jdbc_url) \
-    .option("dbtable", sql_table) \
-    .option("user", sql_user) \
-    .option("password", sql_password) \
-    .option("partitionColumn", "SaleID") \
-    .option("lowerBound", "1") \
-    .option("upperBound", "100000") \
-    .option("numPartitions", "8") \
-    .load()
-
-print(f"📊 Particiones: {df_partitioned.rdd.getNumPartitions()}")
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ## 4. Escribir a Azure SQL
-
-# COMMAND ----------
-
-from pyspark.sql.functions import *
-
-# Crear datos agregados para escribir
-df_agg = df_sql \
-    .groupBy("ProductID") \
-    .agg(
-        count("*").alias("TotalSales"),
-        sum("Amount").alias("TotalRevenue"),
-        avg("Amount").alias("AvgAmount")
-    )
-
-print("📊 Datos a escribir:")
-display(df_agg)
-
-# COMMAND ----------
-
-# Escribir a nueva tabla
-output_table = "dbo.ProductSummary"
-
-df_agg.write \
-    .format("jdbc") \
-    .option("url", jdbc_url) \
-    .option("dbtable", output_table) \
-    .option("user", sql_user) \
-    .option("password", sql_password) \
-    .option("driver", "com.microsoft.sqlserver.jdbc.SQLServerDriver") \
-    .mode("overwrite") \
-    .save()
-
-print(f"✅ Datos escritos a {output_table}")
-```
-
----
-
-## Ejercicio 4: Azure Service Bus (Bonus - 10 min)
-
-Notebook: "Lab06_ServiceBus_Streaming"
-
-```python
-# Databricks notebook source
-# MAGIC %md
-# MAGIC # Streaming con Azure Service Bus
-
-# COMMAND ----------
-
-# Parámetros Service Bus
-servicebus_namespace = "<namespace>.servicebus.windows.net"
-queue_name = "sales-queue"
-
-# Connection string desde Key Vault
-servicebus_conn_str = dbutils.secrets.get(scope="azure-key-vault", key="servicebus-connection-string")
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ## 1. Leer Stream desde Service Bus
+# MAGIC # Integración de Múltiples Formatos
 
 # COMMAND ----------
 
 from pyspark.sql.functions import *
 from pyspark.sql.types import *
+import random
+from datetime import datetime, timedelta
 
-# Schema del mensaje
-message_schema = StructType([
-    StructField("transaction_id", StringType()),
-    StructField("customer_id", StringType()),
-    StructField("amount", DoubleType()),
-    StructField("timestamp", TimestampType())
-])
+# Generar catálogo de productos
+products_data = [
+    {"product_id": f"P{i:03d}", 
+     "name": f"Product {i}", 
+     "category": random.choice(["Electronics", "Clothing", "Food", "Books"]), 
+     "price": round(random.uniform(10, 500), 2)}
+    for i in range(1, 51)
+]
 
-# Leer stream
-df_stream = spark.readStream \
-    .format("servicebus") \
-    .option("connectionString", servicebus_conn_str) \
-    .option("queueName", queue_name) \
-    .option("maxEventsPerTrigger", 100) \
-    .load()
+df_products = spark.createDataFrame(products_data)
 
-# Parsear JSON del body
-df_parsed = df_stream \
-    .select(
-        col("body").cast("string").alias("json_data"),
-        col("enqueuedTime"),
-        col("sequenceNumber")
-    ) \
-    .select(
-        from_json(col("json_data"), message_schema).alias("data"),
-        col("enqueuedTime"),
-        col("sequenceNumber")
-    ) \
-    .select("data.*", "enqueuedTime", "sequenceNumber")
+# Guardar como CSV
+products_path = "/tmp/lab06/source/products.csv"
+df_products.write.format("csv").option("header", "true").mode("overwrite").save(products_path)
 
+print(f"✅ Productos guardados en CSV: {products_path}")
+display(df_products.limit(10))
+```
+
+### Paso 2: Generar Datos en JSON (Transacciones)
+
+```python
 # COMMAND ----------
 
+# Generar transacciones
+transactions_data = []
+for i in range(200):
+    transactions_data.append({
+        "transaction_id": f"TXN{i:05d}",
+        "timestamp": (datetime.now() - timedelta(hours=random.randint(0, 72))).isoformat(),
+        "product_id": f"P{random.randint(1, 50):03d}",
+        "quantity": random.randint(1, 5),
+        "customer_id": f"C{random.randint(1000, 9999)}"
+    })
+
+df_transactions = spark.createDataFrame(transactions_data)
+
+# Guardar como JSON
+transactions_path = "/tmp/lab06/source/transactions.json"
+df_transactions.write.format("json").mode("overwrite").save(transactions_path)
+
+print(f"✅ Transacciones guardadas en JSON: {transactions_path}")
+display(df_transactions.limit(10))
+```
+
+### Paso 3: Generar Datos en Parquet (Clientes)
+
+```python
+# COMMAND ----------
+
+# Generar datos de clientes
+customers_data = [
+    {
+        "customer_id": f"C{i}",
+        "name": f"Customer {i}",
+        "email": f"customer{i}@example.com",
+        "country": random.choice(["US", "UK", "CA", "AU", "MX"])
+    }
+    for i in range(1000, 10000)
+]
+
+df_customers = spark.createDataFrame(customers_data)
+
+# Guardar como Parquet
+customers_path = "/tmp/lab06/source/customers.parquet"
+df_customers.write.format("parquet").mode("overwrite").save(customers_path)
+
+print(f"✅ Clientes guardados en Parquet: {customers_path}")
+display(df_customers.limit(10))
+```
+
+---
+
+## Ejercicio 2: Leer y Unificar Datos (10 min)
+
+### Paso 1: Leer Cada Formato
+
+```python
+# COMMAND ----------
 # MAGIC %md
-# MAGIC ## 2. Procesar y Escribir a Delta
+# MAGIC ## Lectura de Diferentes Formatos
 
 # COMMAND ----------
 
-# Definir checkpointing
-checkpoint_path = "/tmp/lab06/checkpoints/servicebus"
-output_path = "/tmp/lab06/streaming/sales"
+# Leer CSV
+df_products = spark.read.format("csv") \
+    .option("header", "true") \
+    .option("inferSchema", "true") \
+    .load(products_path)
 
-# Streaming query con agregación por ventana
-query = df_parsed \
-    .withWatermark("timestamp", "10 minutes") \
-    .groupBy(
-        window(col("timestamp"), "5 minutes"),
-        col("customer_id")
-    ) \
+print(f"📊 Productos (CSV): {df_products.count()} registros")
+display(df_products.limit(5))
+
+# COMMAND ----------
+
+# Leer JSON
+df_transactions = spark.read.format("json").load(transactions_path)
+
+print(f"📊 Transacciones (JSON): {df_transactions.count()} registros")
+display(df_transactions.limit(5))
+
+# COMMAND ----------
+
+# Leer Parquet
+df_customers = spark.read.format("parquet").load(customers_path)
+
+print(f"📊 Clientes (Parquet): {df_customers.count()} registros")
+display(df_customers.limit(5))
+```
+
+### Paso 2: Join y Enriquecimiento
+
+```python
+# COMMAND ----------
+# MAGIC %md
+# MAGIC ## Joins Entre Datasets
+
+# COMMAND ----------
+
+# Join 1: Transacciones + Productos
+df_enriched = df_transactions \
+    .join(df_products, "product_id", "left") \
+    .withColumn("total_amount", col("quantity") * col("price"))
+
+print(f"✅ Join Transacciones + Productos: {df_enriched.count()} registros")
+display(df_enriched.limit(10))
+
+# COMMAND ----------
+
+# Join 2: Agregar info de Clientes
+df_complete = df_enriched \
+    .join(df_customers, "customer_id", "left") \
+    .select(
+        "transaction_id",
+        "timestamp",
+        "customer_id",
+        col("name").alias("customer_name"),
+        "email",
+        "country",
+        "product_id",
+        df_products["name"].alias("product_name"),
+        "category",
+        "quantity",
+        "price",
+        "total_amount"
+    )
+
+print(f"✅ Dataset Completo: {df_complete.count()} registros")
+display(df_complete.limit(10))
+```
+
+---
+
+## Ejercicio 3: Agregaciones y Análisis (10 min)
+
+### Paso 1: Análisis por Categoría
+
+```python
+# COMMAND ----------
+# MAGIC %md
+# MAGIC ## Análisis de Negocio
+
+# COMMAND ----------
+
+# Agregación por categoría
+df_by_category = df_complete \
+    .groupBy("category") \
     .agg(
         count("*").alias("num_transactions"),
-        sum("amount").alias("total_amount")
+        sum("total_amount").alias("total_revenue"),
+        avg("total_amount").alias("avg_transaction_amount"),
+        sum("quantity").alias("total_units_sold"),
+        countDistinct("customer_id").alias("unique_customers")
     ) \
-    .writeStream \
+    .orderBy(col("total_revenue").desc())
+
+print("📊 Análisis por Categoría:")
+display(df_by_category)
+```
+
+### Paso 2: Análisis Geográfico
+
+```python
+# COMMAND ----------
+
+# Agregación por país
+df_by_country = df_complete \
+    .groupBy("country") \
+    .agg(
+        count("*").alias("num_transactions"),
+        sum("total_amount").alias("total_revenue"),
+        countDistinct("customer_id").alias("unique_customers"),
+        countDistinct("product_id").alias("unique_products")
+    ) \
+    .orderBy(col("total_revenue").desc())
+
+print("📊 Análisis por País:")
+display(df_by_country)
+```
+
+### Paso 3: Top Productos
+
+```python
+# COMMAND ----------
+
+# Top 10 productos más vendidos
+df_top_products = df_complete \
+    .groupBy("product_id", "product_name", "category") \
+    .agg(
+        sum("quantity").alias("total_quantity"),
+        sum("total_amount").alias("total_revenue"),
+        count("*").alias("num_orders")
+    ) \
+    .orderBy(col("total_revenue").desc()) \
+    .limit(10)
+
+print("📊 Top 10 Productos:")
+display(df_top_products)
+```
+
+---
+
+## Ejercicio 4: Guardar en Data Lakehouse (5 min)
+
+### Paso 1: Capa de Detalles (Particionada)
+
+```python
+# COMMAND ----------
+# MAGIC %md
+# MAGIC ## Guardar en Lakehouse
+
+# COMMAND ----------
+
+# Agregar columna de fecha para particionar
+df_with_date = df_complete.withColumn("date", to_date("timestamp"))
+
+# Guardar particionado por categoría y país
+lakehouse_path = "/tmp/lab06/lakehouse/transactions_complete"
+
+df_with_date.write \
     .format("delta") \
+    .mode("overwrite") \
+    .partitionBy("category", "country") \
+    .save(lakehouse_path)
+
+print(f"✅ Datos guardados en: {lakehouse_path}")
+
+# COMMAND ----------
+
+# Verificar particiones
+files = dbutils.fs.ls(lakehouse_path)
+partitions = [f.name for f in files if f.name.startswith("category=")]
+print(f"📁 Particiones creadas: {len(partitions)}")
+for p in partitions[:5]:
+    print(f"  - {p}")
+```
+
+### Paso 2: Capa Serving (Agregaciones Pre-calculadas)
+
+```python
+# COMMAND ----------
+
+# Guardar agregaciones para consultas rápidas
+serving_path = "/tmp/lab06/serving"
+
+# 1. Por categoría
+df_by_category.write \
+    .format("delta") \
+    .mode("overwrite") \
+    .save(f"{serving_path}/by_category")
+
+# 2. Por país
+df_by_country.write \
+    .format("delta") \
+    .mode("overwrite") \
+    .save(f"{serving_path}/by_country")
+
+# 3. Top productos
+df_top_products.write \
+    .format("delta") \
+    .mode("overwrite") \
+    .save(f"{serving_path}/top_products")
+
+print(f"✅ Capa Serving creada en: {serving_path}")
+```
+
+---
+
+## Ejercicio 5: Streaming con Auto Loader (10 min)
+
+### Paso 1: Preparar Directorio de Streaming
+
+```python
+# COMMAND ----------
+# MAGIC %md
+# MAGIC ## Streaming con Auto Loader
+
+# COMMAND ----------
+
+# Paths para streaming
+streaming_input = "/tmp/lab06/streaming/input"
+streaming_checkpoint = "/tmp/lab06/streaming/checkpoint"
+streaming_output = "/tmp/lab06/streaming/output"
+
+# Limpiar ejecuciones anteriores
+dbutils.fs.rm(streaming_input, True)
+dbutils.fs.rm(streaming_checkpoint, True)
+dbutils.fs.rm(streaming_output, True)
+
+print("✅ Directorios de streaming limpiados")
+
+# COMMAND ----------
+
+# Crear archivo inicial
+batch1 = spark.range(0, 100).withColumn("value", rand() * 1000)
+batch1.write.format("json").mode("overwrite").save(f"{streaming_input}/batch1")
+
+print(f"✅ Batch inicial creado en: {streaming_input}/batch1")
+```
+
+### Paso 2: Configurar Auto Loader
+
+```python
+# COMMAND ----------
+
+# Leer stream con Auto Loader (cloudFiles)
+df_stream = spark.readStream \
+    .format("cloudFiles") \
+    .option("cloudFiles.format", "json") \
+    .option("cloudFiles.schemaLocation", streaming_checkpoint) \
+    .load(streaming_input)
+
+# Transformaciones
+df_stream_processed = df_stream \
+    .withColumn("processed_at", current_timestamp()) \
+    .withColumn("value_category",
+                when(col("value") < 250, "Low")
+                .when(col("value") < 750, "Medium")
+                .otherwise("High"))
+
+print("✅ Stream configurado")
+```
+
+### Paso 3: Iniciar Streaming
+
+```python
+# COMMAND ----------
+
+# Escribir stream a Delta
+query = df_stream_processed.writeStream \
+    .format("delta") \
+    .option("checkpointLocation", streaming_checkpoint) \
     .outputMode("append") \
-    .option("checkpointLocation", checkpoint_path) \
-    .start(output_path)
+    .start(streaming_output)
 
 print("🔄 Streaming iniciado...")
-print(f"Query ID: {query.id}")
-print(f"Status: {query.status}")
+print(f"   Query ID: {query.id}")
+print(f"   Status: {query.status}")
+```
+
+### Paso 4: Agregar Nuevos Lotes
+
+```python
+# COMMAND ----------
+
+import time
+
+# Agregar más batches (simula ingesta continua)
+for i in range(2, 5):
+    batch = spark.range(0, 50).withColumn("value", rand() * 1000)
+    batch.write.format("json").mode("overwrite").save(f"{streaming_input}/batch{i}")
+    print(f"✅ Batch {i} agregado")
+    time.sleep(2)
+
+print("\n⏳ Esperando procesamiento...")
+time.sleep(5)
+```
+
+### Paso 5: Verificar Resultados
+
+```python
+# COMMAND ----------
+
+# Leer datos procesados
+df_stream_results = spark.read.format("delta").load(streaming_output)
+print(f"📊 Total registros procesados: {df_stream_results.count()}")
+
+# Ver distribución
+display(df_stream_results.groupBy("value_category").count().orderBy("value_category"))
 
 # COMMAND ----------
 
-# Ver datos en tiempo real (mientras corre el stream)
-# MAGIC %sql
-# SELECT * FROM delta.`/tmp/lab06/streaming/sales` ORDER BY window DESC LIMIT 20
-
-# COMMAND ----------
-
-# Detener stream cuando termines
-# query.stop()
+# Detener streaming
+query.stop()
+print("⏹️  Streaming detenido")
 ```
 
 ---
 
-## 🎯 Desafío Final: Pipeline de Integración Completo
+## 🎯 Resumen del Lab
 
-Crea un pipeline end-to-end que integra múltiples servicios Azure:
+Has completado:
 
-### Arquitectura:
+✅ **Formato de Datos**: CSV, JSON, Parquet  
+✅ **Joins Complejos**: 3 datasets combinados  
+✅ **Agregaciones**: Por categoría, país, producto  
+✅ **Lakehouse**: Particionado por múltiples columnas  
+✅ **Serving Layer**: Pre-agregaciones optimizadas  
+✅ **Streaming**: Auto Loader con checkpointing  
 
+---
+
+## 📚 Best Practices Implementadas
+
+### 1. **Selección de Formato**
 ```
-Azure SQL (Productos) ──┐
-                        │
-Event Hub (Eventos) ────┼──> Databricks ──> ADLS Gen2 (Delta Lake) ──> Cosmos DB (Serving)
-                        │                                              
-ADLS Gen2 (Files) ──────┘                                              
+CSV      → Intercambio con sistemas externos
+JSON     → APIs y datos semi-estructurados
+Parquet  → Almacenamiento columnar eficiente
+Delta    → Lakehouse con ACID y time travel
 ```
 
-### Requisitos:
+### 2. **Particionado Estratégico**
+```python
+# ✅ BUENO: Cardinalidad media, queries frecuentes
+.partitionBy("category", "country")
 
-1. **Ingest**:
-   - Lee catálogo de productos desde Azure SQL
-   - Lee archivos CSV desde ADLS Gen2
-   - Stream de transacciones desde Event Hub
+# ❌ MALO: Demasiadas particiones (alta cardinalidad)
+.partitionBy("transaction_id")
 
-2. **Transform**:
-   - Join transacciones con catálogo de productos
-   - Enriquecimiento con dimensiones
-   - Cálculo de métricas (revenue, margin)
+# ❌ MALO: Muy pocas particiones
+.partitionBy("year")
+```
+
+### 3. **Capa Serving**
+- Pre-calcular agregaciones comunes
+- Actualizar en batch (diario/hora)
+- Queries rápidas para dashboards
+
+### 4. **Streaming Patterns**
+```python
+# Auto Loader: Schema evolution automático
+.option("cloudFiles.format", "json")
+.option("cloudFiles.schemaLocation", checkpoint_path)
+
+# Checkpointing: Exactamente-una-vez
+.option("checkpointLocation", checkpoint_path)
+```
+
+---
+
+## 🚀 Próximos Pasos
+
+### Para Producción:
+
+1. **Conectar con Servicios Azure Reales**:
+   - Azure Storage (ADLS Gen2)
+   - Azure Cosmos DB
+   - Azure SQL Database
+   - Azure Event Hubs
+
+2. **Implementar Seguridad**:
+   - Service Principal + OAuth
+   - Azure Key Vault para secretos
+   - RBAC en Storage
+
+3. **Optimización**:
+   - OPTIMIZE + Z-ORDER en Delta
+   - Vacuum para cleanup
+   - Caching para queries frecuentes
+
+4. **Monitoreo**:
+   - Métricas de streaming
    - Data quality checks
-
-3. **Load**:
-   - Escribir a Delta Lake en ADLS Gen2 (particionado por fecha)
-   - Optimizar con OPTIMIZE + Z-ORDER
-   - Publicar agregados a Cosmos DB para serving layer
-
-4. **Security**:
-   - TODAS las credenciales desde Key Vault
-   - Usar Service Principal para ADLS Gen2
-   - Managed Identity donde sea posible
-
-5. **Monitoring**:
-   - Log métricas de cada stage
-   - Alertas en caso de fallo
-   - Dashboard con estadísticas
+   - Alertas en failures
 
 ---
 
-## ✅ Checklist de Completado
+## ✅ Checklist de Validación
 
-- ☐ Conectado a ADLS Gen2 con Access Key
-- ☐ Conectado a ADLS Gen2 con Service Principal (OAuth)
-- ☐ Creado mount point para storage
-- ☐ Integrado con Cosmos DB (read/write)
-- ☐ Conectado a Azure SQL con JDBC
-- ☐ Implementado lectura particionada desde SQL
-- ☐ (Bonus) Streaming con Service Bus o Event Hub
-- ☐ Todas credenciales almacenadas en Key Vault
-- ☐ Completado pipeline de integración completo
+- [ ] Puedes leer CSV, JSON y Parquet
+- [ ] Joins funcionan correctamente
+- [ ] Agregaciones producen resultados esperados
+- [ ] Datos se guardan particionados
+- [ ] Streaming procesa archivos nuevos automáticamente
+- [ ] Checkpointing permite recovery
+- [ ] Capa Serving tiene agregaciones pre-calculadas
 
 ---
 
-## 📚 Comparación de Servicios
+## 📖 Referencias
 
-| Servicio | Uso Principal | Latencia | Costo |
-|----------|---------------|----------|-------|
-| **ADLS Gen2** | Data Lake (archivos grandes) | Media | Bajo (~$0.02/GB) |
-| **Cosmos DB** | Serving layer (queries rápidos) | Muy baja (<10ms) | Alto (RU-based) |
-| **Azure SQL** | Datos relacionales | Baja | Medio (DTU/vCore) |
-| **Event Hub** | Streaming en tiempo real | Muy baja | Medio (throughput) |
-| **Service Bus** | Mensajería async | Baja | Bajo (mensajes) |
-
----
-
-## 🔐 Mejores Prácticas de Seguridad
-
-✅ **DO**:
-- Usar Key Vault para TODAS las credenciales
-- Preferir Service Principal sobre Access Keys
-- Usar Managed Identity cuando sea posible
-- Rotar secrets regularmente
-- Aplicar RBAC en todos los recursos
-- Usar Private Endpoints en producción
-
-❌ **DON'T**:
-- Hardcodear credenciales en notebooks
-- Usar Access Keys en producción
-- Compartir Service Principal secrets
-- Dar permisos excesivos (seguir least privilege)
-
----
-
-**🎉 ¡Felicitaciones! Has completado todos los laboratorios de Azure Databricks.**
-
-Ahora estás listo para:
-- Diseñar arquitecturas de datos en Azure
-- Implementar pipelines ETL productivos
-- Integrar múltiples servicios Azure
-- Optimizar costos y performance
-- Aplicar mejores prácticas de seguridad
-
-## 📚 Próximos Pasos
-
-1. Revisar [FAQ](../resources/faq.md) para dudas comunes
-2. Usar [Checklist KT](../resources/checklist-kt.md) con tu partner
-3. Explorar [Referencias](../resources/referencias.md) para profundizar
-4. Practicar con casos de uso reales de tu organización
-
-**¡Éxito en tu viaje con Azure Databricks! 🚀**
+- [Auto Loader Docs](https://docs.databricks.com/ingestion/auto-loader/index.html)
+- [Delta Lake Best Practices](https://docs.databricks.com/delta/best-practices.html)
+- [Structured Streaming](https://spark.apache.org/docs/latest/structured-streaming-programming-guide.html)
+- [Partitioning Strategies](https://docs.databricks.com/delta/partition.html)
