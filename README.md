@@ -8,6 +8,16 @@ Introducir Azure Databricks y demostrar cómo procesa y transforma los datos que
 
 ## 📋 Contenido del Repositorio
 
+### � Notebooks Jupyter (NUEVO)
+- [Lab 01 - Workspace](./notebooks/lab-01-workspace.ipynb) - DataFrames, transformaciones, Delta Lake
+- [Lab 02 - Clusters](./notebooks/lab-02-clusters.ipynb) - Autoscaling, calculadora de costos
+- [Lab 03 - Notebooks Avanzados](./notebooks/lab-03-notebooks.ipynb) - Magic commands, widgets
+- [Lab 04 - Transformación](./notebooks/lab-04-transformacion.ipynb) - Arquitectura Medallion
+- [Lab 05 - Jobs](./notebooks/lab-05-jobs.ipynb) - Workflows multi-task
+- [Lab 06 - Integración](./notebooks/lab-06-integracion.ipynb) - CSV/JSON/Parquet, streaming
+
+**📘 [Ver Guía de Notebooks](./notebooks/README.md)** | **📖 [Documentación Completa del Código](./CODIGO_DOCUMENTACION.md)**
+
 ### 📖 Documentación de Conceptos
 - [01 - Introducción a Azure Databricks](./docs/01-introduccion-databricks.md)
 - [02 - Componentes Clave](./docs/02-componentes-clave.md)
@@ -16,13 +26,13 @@ Introducir Azure Databricks y demostrar cómo procesa y transforma los datos que
 - [05 - Notebooks y Jobs](./docs/05-notebooks-jobs.md)
 - [06 - Integración con Servicios Azure](./docs/06-integracion-azure.md)
 
-### 🔬 Laboratorios y Ejercicios
+### 🔬 Laboratorios y Ejercicios (Markdown)
 - [Lab 01 - Configuración Inicial y Workspace](./labs/lab-01-configuracion-inicial.md)
 - [Lab 02 - Creación y Configuración de Clusters](./labs/lab-02-clusters.md)
 - [Lab 03 - Trabajando con Notebooks](./labs/lab-03-notebooks.md)
 - [Lab 04 - Transformación de Datos](./labs/lab-04-transformacion-datos.md)
 - [Lab 05 - Configuración y Ejecución de Jobs](./labs/lab-05-jobs.md)
-- [Lab 06 - Integración con Cosmos DB y Storage](./labs/lab-06-integracion-datos.md)
+- [Lab 06 - Integración de Datos](./labs/lab-06-integracion-datos.md)
 
 ### 🎬 Demos
 - [Demo 01 - Recorrido por Notebook de Transformación](./demos/demo-01-notebook-transformacion.md)
@@ -57,9 +67,36 @@ Al finalizar esta sesión, los participantes comprenderán:
 
 ## 🚀 Cómo Usar Este Repositorio
 
-1. **Para Instructores**: Seguir el orden de la documentación y utilizar las demos como guía
-2. **Para Participantes**: Revisar la documentación antes de la sesión y completar los laboratorios
-3. **Para Operadores**: Consultar el checklist y las preguntas para el partner
+### 📖 Para Lectura y Teoría
+1. **Documentación Conceptual** (`/docs/`): Fundamentos, arquitectura, mejores prácticas
+2. **Guías de Laboratorio** (`/labs/`): Instrucciones paso a paso en Markdown
+
+### 💻 Para Práctica Hands-On
+1. **Notebooks Jupyter** (`/notebooks/`): Código ejecutable listo para usar
+   - Sube los `.ipynb` a tu Databricks Workspace
+   - O clona el repo usando Databricks Repos
+   - Ejecuta celda por celda siguiendo las instrucciones
+
+2. **Documentación del Código** (`CODIGO_DOCUMENTACION.md`):
+   - Explicaciones línea por línea de todo el código
+   - Docstrings, comentarios detallados, ejemplos
+   - Conceptos de PySpark, Delta Lake, optimizaciones
+   - **¡Consultar mientras ejecutas los notebooks!**
+
+### 👨‍🏫 Para Instructores
+- Seguir el orden de la documentación
+- Utilizar las demos como guía
+- Referir a los notebooks para ejercicios prácticos
+
+### 👨‍🎓 Para Participantes
+- Revisar documentación antes de la sesión
+- Completar laboratorios en orden (Lab 01 → Lab 06)
+- Ejecutar notebooks en Databricks Workspace
+- Consultar `CODIGO_DOCUMENTACION.md` para entender el código en profundidad
+
+### ⚙️ Para Operadores
+- Consultar el checklist y preguntas para el partner
+- Revisar demos de jobs para operación en producción
 
 ## 📚 Prerequisitos
 
