@@ -22,8 +22,8 @@ Este módulo cubre los fundamentos de Azure Event Hubs para mensajería en tiemp
 
 ### 🧪 Laboratorios Prácticos (`labs/`)
 
-- **[Lab 01: Productor y Consumer Básicos](labs/lab-01-productor-consumer.md)** - Ejercicio guiado (30 min)
-- **[Lab 02: Integración con Databricks](labs/lab-02-databricks-streaming.md)** - Structured Streaming (45 min)
+- **[Lab 01: Productor y Consumer Básicos](labs/lab-01-productor-consumer.md)** - Crear productor/consumer desde cero (30-40 min)
+- **[Lab 02: Integración con Databricks](labs/lab-02-databricks-streaming.md)** - Structured Streaming + Delta Lake (45-50 min)
 
 ---
 
